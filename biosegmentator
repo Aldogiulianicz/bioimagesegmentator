@@ -1,0 +1,227 @@
+import tkinter as tk
+from tkinter import filedialog, simpledialog
+from tkinter import ttk
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+import SimpleITK as sitk
+import numpy as np
+
+# Dichiariamo variabili globali
+media = 0.0
+segmented_image = None
+array = []
+selected_option = "opzione1"  # Opzione di default
+current_canvas = None
+
+def on_button_click():
+    file_path = filedialog.askopenfilename(title="Seleziona un file", filetypes=[("NRRD files", "*.nrrd"), ("DICOM files", "*.dcm")])
+    if file_path:
+        load_and_display_file(file_path)
+
+def load_and_display_file(file_path):
+    global array, selected_option, current_canvas
+
+    # Azzerare le variabili globali
+    array = []
+    selected_option = "opzione1"
+    current_canvas = None
+
+    # Carica le immagini utilizzando SimpleITK
+    image = sitk.ReadImage(file_path)
+    array = sitk.GetArrayFromImage(image)
+
+    # Chiamiamo la funzione per aggiungere i radiobutton solo se il file è di tipo ".nrrd"
+    if file_path.lower().endswith(".nrrd"):
+        add_radio_buttons(image)
+    else:
+        # Visualizza direttamente l'immagine per i file diversi da ".nrrd"
+        show_image(array[0], image, 0)
+
+def add_radio_buttons(image):
+    # Aggiungi radiobutton solo se il file è di tipo NRRD
+    radio_frame = tk.Frame(frame)
+    radio_frame.pack(pady=10)
+
+    radio_var = tk.StringVar()
+    radio_var.set(selected_option)
+
+    def on_radio_select():
+        global selected_option
+        selected_option = radio_var.get()
+        ask_for_slice_selection(image)
+
+    option1 = tk.Radiobutton(radio_frame, text="Piano 1", variable=radio_var, value="piano1", command=on_radio_select)
+    option1.pack(side=tk.LEFT, padx=10)
+
+    option2 = tk.Radiobutton(radio_frame, text="Piano 2", variable=radio_var, value="piano2", command=on_radio_select)
+    option2.pack(side=tk.LEFT, padx=10)
+
+    option3 = tk.Radiobutton(radio_frame, text="Piano 3", variable=radio_var, value="piano3", command=on_radio_select)
+    option3.pack(side=tk.LEFT, padx=10)
+
+def ask_for_slice_selection(image):
+    global array
+    # Ottieni il numero di slice per il piano corrente
+    num_slices = array.shape[{"piano1": 0, "piano2": 1, "piano3": 2}[selected_option]]
+
+    if num_slices > 0:
+        # Aggiungiamo una finestra di dialogo per selezionare la fetta dell'immagine
+        slice_number = simpledialog.askinteger("Selezione Fetta", f"Inserisci il numero di fetta desiderato (Numero di slice da 0 a {num_slices - 1}):",
+                                               minvalue = 0, maxvalue=num_slices - 1)
+        if slice_number is not None:
+            # Aggiorniamo l'array per il piano corrente
+            selected_slice_array = np.take(array, slice_number, axis={"piano1": 0, "piano2": 1, "piano3": 2}[selected_option])
+            show_image(selected_slice_array, image, slice_number)
+    else:
+        # Avvisa l'utente se non ci sono slice disponibili per il piano selezionato
+        messagebox.showinfo("Nessuna Fetta Disponibile", "Nessuna fetta disponibile per il piano selezionato.")
+
+def show_image(image_array, image, selected_slice):
+    global current_canvas
+
+    # Rimuovi il canvas esistente se presente
+    if current_canvas:
+        current_canvas.get_tk_widget().destroy()
+
+    fig = Figure(figsize=(5, 5))  # Puoi regolare le dimensioni qui, ad esempio, (10, 5) per rendere l'immagine più lunga
+    ax = fig.add_subplot(111)
+
+    # Stampiamo l'immagine a video
+    ax.imshow(image_array, cmap='gray', aspect='auto')  # Impostiamo aspect su 'auto' per mantenere il rapporto di aspetto originale
+    ax.axis('off')
+
+    # Crea un nuovo canvas e aggiornalo con la nuova immagine
+    canvas = FigureCanvasTkAgg(fig, master=frame)
+    canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+    canvas.draw()
+
+    # Aggiorna la variabile globale current_canvas
+    current_canvas = canvas
+
+    # Pulsante "Visualizza Istogramma"
+    histogram_button = tk.Button(frame, text="Visualizza Istogramma")
+    histogram_button.pack()
+
+    # Pulsante "Visualizza Media"
+    mean_button = tk.Button(frame, text="Visualizza Media")
+    mean_button.pack()
+
+    # Pulsante "Visualizza Immagine Segmentata"
+    segmented_button = tk.Button(frame, text="Visualizza Immagine Segmentata")
+    segmented_button.pack()
+
+    def on_click_hisogram():
+        histogram_button.config(state="disabled")
+        root.after(50, show_histogram, image_array)
+
+    histogram_button.config(command=on_click_hisogram)
+
+    def on_click_mean():
+        mean_button.config(state="disabled")
+        root.after(50, show_media, image_array)
+
+    mean_button.config(command=on_click_mean)
+
+    def on_click_segmented():
+        segmented_button.config(state="disabled")
+        root.after(50, show_segmented_image, image, selected_slice)
+
+    segmented_button.config(command=on_click_segmented)
+
+def show_segmented_image(image, selected_slice):
+    global selected_option
+    plane_index = {"piano1": 0, "piano2": 1, "piano3": 2}.get(selected_option, 0)
+    selected_slice_array = np.take(array, selected_slice, axis=plane_index)
+
+    # Effettua la segmentazione (modifica questa parte in base alla tua logica di segmentazione)
+    segmented_image = np.where(selected_slice_array > media, 1, 0)
+
+    # Ottieni la risoluzione dell'immagine
+    pixel_ratio = image.GetSpacing()[1] / image.GetSpacing()[1]
+
+    # Visualizza l'immagine segmentata con condizioni separate per ciascun piano
+    fig = Figure(figsize=(5, 5 * pixel_ratio))
+    ax = fig.add_subplot(111)
+
+    ax.imshow(segmented_image, cmap="gray", aspect='auto', origin='upper')
+
+    ax.axis('off')
+
+    # Aggiorna la GUI con l'immagine segmentata
+    canvas = FigureCanvasTkAgg(fig, master=frame)
+    canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+    canvas.draw()
+
+def show_media(array):
+    global media
+    tolerance = 0.001#La tolleranza è il parametro che specifica quanto i valori medi dei gruppi possono variare rispetto alla soglia corrente prima che il processo iterativo termini.
+
+    media = np.mean(array)
+
+    while True:
+        mL = array[array <= media].mean()
+        mH = array[array > media].mean()
+        new_media = (mL + mH) / 2
+        if abs(media - new_media) < tolerance:
+            break
+        media = new_media
+
+    label_media = tk.Label(frame, text=f"Nuova media calcolata: {media:.2f}", font=("Helvetica", 7))
+    label_media.pack(pady=10)
+
+def show_histogram(image_array):
+    # Creo la finestra dell'istogramma
+    hist_fig = Figure(figsize=(5, 2))
+    hist_ax = hist_fig.add_subplot(111)
+
+    flatten_array = image_array.flatten()
+    media = np.mean(flatten_array)
+
+    # Do a display l'istogramma
+    hist_ax.hist(flatten_array, bins=100, color="blue")
+    hist_ax.axvline(media, color='red', linestyle='dashed', linewidth=2)
+
+    # Aggiorno il canvas con l'istogramma
+    hist_canvas = FigureCanvasTkAgg(hist_fig, master=frame)
+    hist_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+    hist_canvas.draw()
+
+    label_media = tk.Label(frame, text=f"Media: {media:.2f}", font=("Helvetica", 7))
+    label_media.pack(pady=10)
+
+# Genero la finestra principale
+root = tk.Tk()
+root.title("Global_Segmentation")
+
+root.geometry("500x500")
+
+# Aggiunta di uno scrollbar verticale
+scrollbar = ttk.Scrollbar(root, orient="vertical")
+scrollbar.pack(side="right", fill="y")
+
+# Creo un widget Canvas con una barra di scorrimento verticale
+canvas = tk.Canvas(root, yscrollcommand=scrollbar.set)
+canvas.pack(side="left", fill="both", expand=True)
+
+# Configura lo scrollbar per interagire con il Canvas
+scrollbar.config(command=canvas.yview)
+
+# Frame contenente il contenuto
+frame = tk.Frame(canvas)
+canvas.create_window((0, 0), window=frame, anchor="nw")
+
+# Funzione per aggiornare la dimensione del canvas quando il contenuto cambia
+def on_frame_configure(event):
+    canvas.configure(scrollregion=canvas.bbox("all"))
+
+# Aggiungi uno scrolling verticale alla finestra principale
+frame.bind("<Configure>", on_frame_configure)
+
+# Aggiungo il pulsante "Carica File" al frame
+button = tk.Button(frame, text="Carica File", command=on_button_click)
+button.pack(pady=10)
+
+# Gli mando in loop l'esecuzione
+root.mainloop()
